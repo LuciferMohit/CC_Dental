@@ -110,11 +110,11 @@ def evaluate_models():
 
             print(f"\nEvaluating: {model_file}")
 
-            model = SurvivalNet(input_dim).to(device)
+            checkpoint = torch.load(model_path, map_location=device)
 
-            model.load_state_dict(
-                torch.load(model_path, map_location=device)
-            )
+            print(checkpoint.keys())
+
+            break
 
             model.eval()
 
