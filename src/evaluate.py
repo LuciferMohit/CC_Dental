@@ -203,8 +203,11 @@ def load_hybrid_data():
 
     y = df[TARGET]
 
-    X = pd.get_dummies(X, drop_first=True)
+    X = pd.get_dummies(X)
 
+    HYBRID_COLUMNS = list(X.columns)
+
+    X = X.reindex(columns=HYBRID_COLUMNS, fill_value=0)
     X = X.fillna(X.mean())
 
     scaler = StandardScaler()
