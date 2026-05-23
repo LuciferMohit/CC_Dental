@@ -79,7 +79,7 @@ class RadiomicsNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-# ---------------- DATA LOADERS ----------------
+# ---------------- DATA ----------------
 
 def load_clinical_data():
 
@@ -205,9 +205,6 @@ def load_hybrid_data():
 
     X = pd.get_dummies(X)
 
-    HYBRID_COLUMNS = list(X.columns)
-
-    X = X.reindex(columns=HYBRID_COLUMNS, fill_value=0)
     X = X.fillna(X.mean())
 
     scaler = StandardScaler()
@@ -300,9 +297,25 @@ def evaluate_model(model_name):
 
     model_path = os.path.join(MODELS_DIR, model_name)
 
-    model.load_state_dict(
-        torch.load(model_path, map_location=device)
-    )
+    checkpoint = torch.load(model_path, map_location=device)
+
+    expected_features = checkpoint['net.0.weight'].shape[1]
+
+    current_features = X_test.shape[1]
+
+    if current_features > expected_features:
+
+        X_test = X_test[:, :expected_features]
+
+    elif current_features < expected_features:
+
+        padding = expected_features - current_features
+
+        zeros = torch.zeros(X_test.shape[0], padding).to(device)
+
+        X_test = torch.cat([X_test, zeros], dim=1)
+
+    model.load_state_dict(checkpoint)
 
     model.eval()
 
