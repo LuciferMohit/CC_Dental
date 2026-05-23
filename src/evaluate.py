@@ -110,7 +110,22 @@ def load_clinical_data():
 
     y = df[TARGET]
 
-    X = pd.get_dummies(X, drop_first=True)
+    X = pd.get_dummies(X)
+
+    MODEL_COLUMNS = [
+        'Gender', 'Smoking', 'Alcohol', 'Diabetes', 'Hypertension',
+        'FOV_full jaw', 'FOV_lower jaw', 'FOV_lower jaw only', 'FOV_narrowFOV',
+        'FOV_partial jaw – right side', 'FOV_partial mandible (posterior)', 'FOV_posterior',
+        'FOV_upper jaw', 'FOV_upper jaw only',
+        'years_placed_ 1 YEAR ', 'years_placed_ 1.5 YEARS ', 'years_placed_ 10 MONTHS ',
+        'years_placed_ 11 MONTHS ', 'years_placed_ 3 MONTHS ', 'years_placed_ 4 MONTHS ',
+        'years_placed_ 5 MONTHS ', 'years_placed_ 6 MONTHS ', 'years_placed_ 6 MONTHS ',
+        'years_placed_ 7 MONTHS ', 'years_placed_ 8 MONTHS ', 'years_placed_ 9 MONTHS ',
+        'years_placed_1 YEAR',
+        'bone density Misch_D3'
+    ]
+
+    X = X.reindex(columns=MODEL_COLUMNS, fill_value=0)
 
     X = X.fillna(X.mean())
 
