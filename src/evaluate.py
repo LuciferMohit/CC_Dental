@@ -353,10 +353,7 @@ def main():
     models = [
 
         "best_clinical_only_model.pth",
-
-        "best_hybrid_elite_model.pth",
-
-        "best_radiomics_only_model.pth"
+        
     ]
 
     for model_name in models:
