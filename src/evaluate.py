@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 import mlflow
 
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error
