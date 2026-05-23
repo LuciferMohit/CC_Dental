@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import mlflow
-import mlflow.pytorch
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -12,18 +11,23 @@ from sklearn.metrics import r2_score, mean_absolute_error
 
 # ---------------- CONFIG ----------------
 
-DATA_FILE = "data/clinic_implant_level.xlsx"
+CLINIC_FILE = "data/clinic_implant_level.xlsx"
+RADIOMICS_FILE = "data/radiomics_features.xlsx"
+
 MODELS_DIR = "models"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ---------------- MODEL ----------------
+# ---------------- ARCHITECTURES ----------------
 
-class SurvivalNet(nn.Module):
+class ClinicalNet(nn.Module):
+
     def __init__(self, input_dim):
-        super(SurvivalNet, self).__init__()
+
+        super().__init__()
 
         self.net = nn.Sequential(
+
             nn.Linear(input_dim, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
@@ -45,11 +49,41 @@ class SurvivalNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-# ---------------- DATA ----------------
 
-def load_data():
+class RadiomicsNet(nn.Module):
 
-    df = pd.read_excel(DATA_FILE)
+    def __init__(self, input_dim):
+
+        super().__init__()
+
+        self.net = nn.Sequential(
+
+            nn.Linear(input_dim, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+# ---------------- DATA LOADERS ----------------
+
+def load_clinical_data():
+
+    df = pd.read_excel(CLINIC_FILE)
 
     TARGET = 'survival years predicted'
 
@@ -73,15 +107,139 @@ def load_data():
     ]
 
     X = df.drop(columns=[c for c in ignore if c in df.columns])
+
     y = df[TARGET]
 
     X = pd.get_dummies(X, drop_first=True)
+
     X = X.fillna(X.mean())
 
     scaler = StandardScaler()
+
     X_scaled = scaler.fit_transform(X)
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    _, X_test, _, y_test = train_test_split(
+        X_scaled,
+        y,
+        test_size=0.2,
+        random_state=42
+    )
+
+    return (
+        torch.tensor(X_test, dtype=torch.float32).to(device),
+        y_test.values,
+        X.shape[1]
+    )
+
+
+def load_hybrid_data():
+
+    df_c = pd.read_excel(CLINIC_FILE)
+    df_r = pd.read_excel(RADIOMICS_FILE)
+
+    df_c['implant_id'] = df_c['implant_id'].astype(str)
+    df_r['implant_id'] = df_r['implant_id'].astype(str)
+
+    df = pd.merge(df_c, df_r, on='implant_id', how='inner')
+
+    TARGET = 'survival years predicted'
+
+    df = df.dropna(subset=[TARGET])
+
+    ignore_meta = [
+        'implant_id',
+        'scan_id',
+        'patient_name',
+        'file',
+        'label',
+        'dimensions',
+        'spacing',
+        'slice_count',
+        'StudyDate_ISO',
+        'roi_path',
+        'x_mm',
+        'y_mm',
+        'z_mm',
+        TARGET
+    ]
+
+    clinical_cols = [
+        c for c in df.columns
+        if not c.startswith('original_')
+        and c not in ignore_meta
+    ]
+
+    golden_radiomics = [
+        'original_glcm_ClusterShade',
+        'original_firstorder_Skewness',
+        'original_glszm_SmallAreaLowGrayLevelEmphasis',
+        'original_glszm_ZoneEntropy',
+        'original_shape_MinorAxisLength'
+    ]
+
+    valid_radiomics = [
+        c for c in golden_radiomics
+        if c in df.columns
+    ]
+
+    final_features = clinical_cols + valid_radiomics
+
+    X = df[final_features]
+
+    y = df[TARGET]
+
+    X = pd.get_dummies(X, drop_first=True)
+
+    X = X.fillna(X.mean())
+
+    scaler = StandardScaler()
+
+    X_scaled = scaler.fit_transform(X)
+
+    _, X_test, _, y_test = train_test_split(
+        X_scaled,
+        y,
+        test_size=0.2,
+        random_state=42
+    )
+
+    return (
+        torch.tensor(X_test, dtype=torch.float32).to(device),
+        y_test.values,
+        X.shape[1]
+    )
+
+
+def load_radiomics_data():
+
+    df_c = pd.read_excel(CLINIC_FILE)
+    df_r = pd.read_excel(RADIOMICS_FILE)
+
+    df_c['implant_id'] = df_c['implant_id'].astype(str)
+    df_r['implant_id'] = df_r['implant_id'].astype(str)
+
+    df = pd.merge(df_c, df_r, on='implant_id', how='inner')
+
+    TARGET = 'survival years predicted'
+
+    df = df.dropna(subset=[TARGET])
+
+    radiomics_cols = [
+        c for c in df.columns
+        if c.startswith('original_')
+    ]
+
+    X = df[radiomics_cols]
+
+    y = df[TARGET]
+
+    X = X.fillna(X.mean())
+
+    scaler = StandardScaler()
+
+    X_scaled = scaler.fit_transform(X)
+
+    _, X_test, _, y_test = train_test_split(
         X_scaled,
         y,
         test_size=0.2,
@@ -96,50 +254,84 @@ def load_data():
 
 # ---------------- EVALUATION ----------------
 
-def evaluate_models():
+def evaluate_model(model_name):
 
-    X_test, y_true, input_dim = load_data()
+    if model_name == "best_clinical_only_model.pth":
+
+        X_test, y_true, input_dim = load_clinical_data()
+
+        model = ClinicalNet(input_dim).to(device)
+
+    elif model_name == "best_hybrid_elite_model.pth":
+
+        X_test, y_true, input_dim = load_hybrid_data()
+
+        model = ClinicalNet(input_dim).to(device)
+
+    elif model_name == "best_radiomics_only_model.pth":
+
+        X_test, y_true, input_dim = load_radiomics_data()
+
+        model = RadiomicsNet(input_dim).to(device)
+
+    else:
+
+        print(f"Skipping unsupported model: {model_name}")
+
+        return
+
+    model_path = os.path.join(MODELS_DIR, model_name)
+
+    model.load_state_dict(
+        torch.load(model_path, map_location=device)
+    )
+
+    model.eval()
+
+    with torch.no_grad():
+
+        predictions = model(X_test)
+
+        y_pred = predictions.cpu().numpy()
+
+        r2 = r2_score(y_true, y_pred)
+
+        mae = mean_absolute_error(y_true, y_pred)
+
+    with mlflow.start_run(run_name=model_name):
+
+        mlflow.log_metric("R2 Score", float(r2))
+
+        mlflow.log_metric("MAE", float(mae))
+
+        mlflow.log_param("model_name", model_name)
+
+        mlflow.log_artifact(model_path)
+
+        print(f"\n{model_name}")
+
+        print(f"R2 Score: {r2:.4f}")
+
+        print(f"MAE: {mae:.4f}")
+
+
+def main():
 
     mlflow.set_experiment("Dental_Implant_Models")
 
-    for model_file in os.listdir(MODELS_DIR):
+    models = [
 
-        if model_file.endswith(".pth"):
+        "best_clinical_only_model.pth",
 
-            model_path = os.path.join(MODELS_DIR, model_file)
+        "best_hybrid_elite_model.pth",
 
-            print(f"\nEvaluating: {model_file}")
+        "best_radiomics_only_model.pth"
+    ]
 
-            checkpoint = torch.load(model_path, map_location=device)
+    for model_name in models:
 
-            print(checkpoint.keys())
+        evaluate_model(model_name)
 
-            break
-
-            model.eval()
-
-            with torch.no_grad():
-
-                predictions = model(X_test)
-
-                y_pred = predictions.cpu().numpy()
-
-                r2 = r2_score(y_true, y_pred)
-                mae = mean_absolute_error(y_true, y_pred)
-
-            with mlflow.start_run(run_name=model_file):
-
-                mlflow.log_metric("R2 Score", float(r2))
-                mlflow.log_metric("MAE", float(mae))
-
-                mlflow.log_param("model_name", model_file)
-
-                mlflow.log_artifact(model_path)
-
-                print(f"R2 Score: {r2:.4f}")
-                print(f"MAE: {mae:.4f}")
-
-# ---------------- MAIN ----------------
 
 if __name__ == "__main__":
-    evaluate_models()
+    main()
